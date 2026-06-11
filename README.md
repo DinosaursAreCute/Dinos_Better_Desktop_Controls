@@ -1,6 +1,5 @@
 # Dinos_Better_Desktop_Controls
-A small AHK sript to switch desktops via the windows + numbers key. 
-
+A collection of Autohotkey scripts that enhance the windows experience. 
 #### Workspaces — AutoHotkey
 
 | Shortcut | Action |
