@@ -177,28 +177,37 @@ UpdateResults() {
     if (IsUrl(q))
         AddResult("url", "Open  " q, "Open in default browser", NormalizeUrl(q), gCatIcon["web"])
 
-    ; 5) OS operations + Settings pages (keyword match)
-    for cmd in OsCommands() {
-        if KeywordMatch(cmd["keys"], q)
-            AddResult("os", cmd["title"], cmd["sub"], cmd["run"], gCatIcon["os"])
-    }
-
-    ; 6) applications (fuzzy)
+    ; 5) OS operations, Settings pages, and applications compete on one
+    ;    ranked list so the best match (whatever its kind) floats to the top.
     matches := []
+    for cmd in OsCommands() {
+        s := Score(cmd["title"], q)
+        if KeywordMatch(cmd["keys"], q)        ; keyword hit is a strong signal
+            s := Max(s, 600)
+        if (s >= 0)
+            matches.Push({s: s, type: "os", item: cmd})
+    }
     for app in gApps {
         s := Score(app["name"], q)
         if (s >= 0)
-            matches.Push({s: s, app: app})
+            matches.Push({s: s, type: "app", item: app})
     }
     SortByScore(matches)
     for m in matches {
         if (gResults.Length >= MAX_RESULTS - 1)
             break
-        a := m.app
-        AddResult("app", a["name"], a["path"], a, GetIcon(a.Has("target") && a["target"] ? a["target"] : a["path"]))
+        if (m.type = "os") {
+            c := m.item
+            AddResult("os", c["title"], c["sub"], c["run"], gCatIcon["os"])
+        } else {
+            a := m.item
+            icon := a.Has("target") && a["target"] ? GetIcon(a["target"])
+                  : (a.Has("uwp") ? gCatIcon["app"] : GetIcon(a["path"]))
+            AddResult("app", a["name"], a["path"], a, icon)
+        }
     }
 
-    ; 7) web-search fallback (always last)
+    ; 6) web-search fallback (always last)
     AddResult("search", "Search the web for  " q, "Google", q, gCatIcon["web"])
 
     ; select first row
@@ -220,11 +229,13 @@ ExecuteResult(res, admin := false) {
     kind := res["kind"], data := res["data"]
     switch kind {
         case "app":
-            path := data["path"]
-            if admin
-                Run('*RunAs "' path '"')
+            launch := data.Has("launch") ? data["launch"] : data["path"]
+            if data.Has("uwp")
+                Run(launch)                       ; shell:AppsFolder\<AppID>
+            else if admin
+                Run('*RunAs "' launch '"')
             else
-                Run('"' path '"')
+                Run('"' launch '"')
         case "file", "folder", "url":
             Run(data)
         case "shell":
@@ -263,7 +274,7 @@ ScanApps() {
             if seen.Has(key)
                 continue
             seen[key] := true
-            item := Map("name", name, "path", A_LoopFileFullPath)
+            item := Map("name", name, "path", A_LoopFileFullPath, "launch", A_LoopFileFullPath)
             if (ext = "lnk") {
                 try {
                     target := ""
@@ -275,6 +286,23 @@ ScanApps() {
             gApps.Push(item)
         }
     }
+
+    ; --- UWP / Store apps + anything else in the shell "All apps" list ---
+    ; shell:AppsFolder is exactly what Windows Search / Start "All apps" enumerate.
+    try {
+        appsFolder := ComObject("Shell.Application").Namespace("shell:AppsFolder")
+        for it in appsFolder.Items() {
+            name := it.Name
+            key := StrLower(name)
+            if (name = "" || seen.Has(key))
+                continue
+            seen[key] := true
+            ; it.Path is the AppUserModelID; launchable via shell:AppsFolder\<id>
+            gApps.Push(Map("name", name, "path", "Installed app"
+                , "launch", "shell:AppsFolder\" it.Path, "uwp", true))
+        }
+    }
+
     TrayTip "CommandBar", "Indexed " gApps.Length " apps.", 1
 }
 
@@ -591,4 +619,5 @@ PrecacheCategoryIcons() {
     gCatIcon["calc"]   := SysIconIndex("x.txt",  0x80, 1)
     gCatIcon["shell"]  := SysIconIndex("x.bat",  0x80, 1)
     gCatIcon["os"]     := SysIconIndex("x.exe",  0x80, 1)
+    gCatIcon["app"]    := SysIconIndex("x.exe",  0x80, 1)   ; generic icon for UWP apps
 }
